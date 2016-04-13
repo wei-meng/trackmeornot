@@ -1,0 +1,1501 @@
+diff --git a/Source/core/BUILD.gn b/Source/core/BUILD.gn
+index 9c7f091..c22868d 100644
+--- a/Source/core/BUILD.gn
++++ b/Source/core/BUILD.gn
+@@ -145,6 +145,7 @@ source_set("core") {
+   deps = [
+     ":dom",
+     ":html",
++    ":tmon",
+     ":remaining",
+     ":rendering",
+     ":svg",
+@@ -212,6 +213,18 @@ source_set("svg") {
+   #}],
+ }
+ 
++# GYP version: //third_party/WebKit/Source/core/core.gyp:webcore_tmon
++source_set("tmon") {
++  sources = rebase_path(webcore_tmon_files, ".", "//")
++
++  configs -= core_config_remove
++  configs += core_config_add
++
++  deps = [
++    ":prerequisites",
++  ]
++}
++
+ # GYP version: //third_party/WebKit/Source/core/core.gyp:webcore_remaining
+ source_set("remaining") {
+   # This is currently a mashup of "webcore_rendering" and "webcore_remaining"
+diff --git a/Source/core/core.gni b/Source/core/core.gni
+index d4aab00..5d3230b 100644
+--- a/Source/core/core.gni
++++ b/Source/core/core.gni
+@@ -37,6 +37,8 @@ core_event_idl_files = get_path_info(_gypi.core_event_idl_files, "abspath")
+ core_typedefs_enums_only_idl_files =
+   get_path_info(_gypi.core_typedefs_enums_only_idl_files, "abspath")
+ 
++webcore_tmon_files =
++  get_path_info(_gypi.webcore_tmon_files, "abspath")
+ webcore_non_rendering_files =
+   get_path_info(_gypi.webcore_non_rendering_files, "abspath")
+ webcore_rendering_files =
+diff --git a/Source/core/core.gyp b/Source/core/core.gyp
+index 1c7ab85..e3f6865 100644
+--- a/Source/core/core.gyp
++++ b/Source/core/core.gyp
+@@ -524,6 +524,85 @@
+       ],
+     },
+     {
++      # GN version: //third_party/WebKit/Source/core:tmon
++      'target_name': 'webcore_tmon',
++      'type': 'static_library',
++      'dependencies': [
++        'webcore_prerequisites',
++      ],
++      'sources': [
++        '<@(webcore_tmon_files)',
++      ],
++      'cflags': [
++        '-Wno-exit-time-destructors',
++        '-Wno-global-constructors',
++      ],
++      'conditions': [
++        # Shard this target into parts to work around linker limitations.
++        # on link time code generation builds.
++        ['OS=="win" and (buildtype=="Official" or (fastbuild==0 and win_z7==1))', {
++          'msvs_shard': 19,
++        }],
++        ['OS=="android"', {
++          'cflags': [
++            # WebCore does not work with strict aliasing enabled.
++            # https://bugs.webkit.org/show_bug.cgi?id=25864
++            '-fno-strict-aliasing',
++          ],
++        }],
++        ['OS=="mac"', {
++          'xcode_settings': {
++            # Some Mac-specific parts of WebKit won't compile without having this
++            # prefix header injected.
++            'GCC_PREFIX_HEADER': '<(DEPTH)/third_party/WebKit/Source/build/mac/Prefix.h',
++            'OTHER_CPLUSPLUSFLAGS' : [
++#              '-std=c++11',
++#              '-stdlib=libc++',
++              '-Wno-exit-time-destructors',
++              '-Wno-global-constructors',],
++#            'OTHER_LDFLAGS': ['-stdlib=libc++'],
++          },
++          'link_settings': {
++            'libraries': [
++              '$(SDKROOT)/System/Library/Frameworks/Carbon.framework',
++#              '/usr/lib/libc++.dylib',
++            ],
++          },
++          'sources/': [
++            # Additional files from the WebCore Mac build that are presently
++            # used in the WebCore Chromium Mac build too.
++
++            # Cherry-pick some files that can't be included by broader regexps.
++            # Some of these are used instead of Chromium platform files, see
++            # the specific exclusions in the "exclude" list below.
++            ['include', 'platform/mac/WebCoreSystemInterface\\.h$'],
++            ['include', 'platform/mac/WebCoreTextRenderer\\.mm$'],
++            ['include', 'platform/text/mac/ShapeArabic\\.c$'],
++            ['include', 'platform/text/mac/String(Impl)?Mac\\.mm$'],
++            # Use USE_NEW_THEME on Mac.
++            ['include', 'platform/Theme\\.cpp$'],
++          ],
++        }, { # OS!="mac"
++          'sources!': [
++            'editing/SmartReplaceCF.cpp',
++          ],
++        }],
++        ['OS=="win" and chromium_win_pch==1', {
++          'sources/': [
++            ['include', '<(DEPTH)/third_party/WebKit/Source/build/win/Precompile.cpp'],
++          ],
++        }],
++        ['use_default_render_theme==0 and OS != "android"', {
++          'sources!': [
++            'paint/ThemePainterDefault.cpp',
++            'paint/ThemePainterDefault.h',
++          ],
++        }],
++      ],
++      # Disable c4267 warnings until we fix size_t to int truncations.
++      'msvs_disabled_warnings': [ 4267, 4334, ],
++    },
++    {
+       # GN version: //third_party/WebKit/Source/core:remaining
+       'target_name': 'webcore_remaining',
+       'type': 'static_library',
+@@ -593,6 +672,7 @@
+       'dependencies': [
+         'webcore_dom',
+         'webcore_html',
++        'webcore_tmon',
+         'webcore_remaining',
+         'webcore_rendering',
+         'webcore_svg',
+@@ -746,6 +826,7 @@
+ 
+             # webcore_non_rendering, webcore_rendering
+             '<@(webcore_rendering_files)',
++            '<@(webcore_tmon_files)',
+             '<@(webcore_non_rendering_files)',
+             # webcore_dom
+             '<@(webcore_dom_files)',
+diff --git a/Source/core/core.gypi b/Source/core/core.gypi
+index 8a9c3b8..0b8d532 100644
+--- a/Source/core/core.gypi
++++ b/Source/core/core.gypi
+@@ -844,6 +844,14 @@
+             'layout/svg/line/SVGRootInlineBox.cpp',
+             'layout/svg/line/SVGRootInlineBox.h',
+         ],
++        'webcore_tmon_files': [
++            'tmon/ClassificationModel.cpp',
++            'tmon/ClassificationModel.h',
++            'tmon/HTML2TextContent.cpp',
++            'tmon/HTML2TextContent.h',
++            'tmon/TrackingControl.h',
++            'tmon/TrackingControl.cpp',
++        ],
+         'webcore_non_rendering_files': [
+             'Init.cpp',
+             'Init.h',
+diff --git a/Source/core/dom/Document.cpp b/Source/core/dom/Document.cpp
+index aa0d259..ce2985e 100644
+--- a/Source/core/dom/Document.cpp
++++ b/Source/core/dom/Document.cpp
+@@ -218,6 +218,9 @@
+ #include "wtf/text/StringBuffer.h"
+ #include "wtf/text/TextEncodingRegistry.h"
+ 
++#include "base/logging.h"
++#include "base/trace_event/tracking_control_trace.h"
++
+ using namespace WTF;
+ using namespace Unicode;
+ 
+@@ -455,6 +458,7 @@ Document::Document(const DocumentInit& initializer, DocumentClassFlags documentC
+     , m_sawElementsInKnownNamespaces(false)
+     , m_isSrcdocDocument(false)
+     , m_isMobileDocument(false)
++    , m_isCheckedUserTrackingPreference(false)
+     , m_layoutView(0)
+ #if !ENABLE(OILPAN)
+     , m_weakFactory(this)
+@@ -693,6 +697,27 @@ DOMImplementation& Document::implementation()
+     return *m_implementation;
+ }
+ 
++bool Document::isCheckedUserTrackingPreference()
++{
++  if (IsTrackingControlEnabled()) {
++    if (!m_isCheckedUserTrackingPreference && frame() && !frame()->isMainFrame()) {
++        m_isCheckedUserTrackingPreference = true;
++    }
++    return m_isCheckedUserTrackingPreference;
++  }
++  return true;
++}
++
++void Document::didCheckUserTrackingPreference(bool enforcePreload)
++{
++  /*TMON_TRACE("Document::didCheckUserTrackingPreference");*/
++  /*TMON_TRACE_FLUSH();*/
++
++  m_isCheckedUserTrackingPreference = true;
++  if (enforcePreload)
++    m_parser->resumePreload();
++}
++
+ bool Document::hasAppCacheManifest() const
+ {
+     return isHTMLHtmlElement(documentElement()) && documentElement()->hasAttribute(manifestAttr);
+diff --git a/Source/core/dom/Document.h b/Source/core/dom/Document.h
+index 6ac39d3..31b4eec 100644
+--- a/Source/core/dom/Document.h
++++ b/Source/core/dom/Document.h
+@@ -66,6 +66,8 @@
+ #include "wtf/PassRefPtr.h"
+ #include "wtf/WeakPtr.h"
+ 
++#include "core/tmon/TrackingControl.h"
++
+ namespace blink {
+ 
+ class AnimationTimeline;
+@@ -296,6 +298,10 @@ public:
+         return m_documentElement.get();
+     }
+ 
++    bool isCheckedUserTrackingPreference();
++
++    void didCheckUserTrackingPreference(bool enforcePreload);
++
+     // Returns whether the Document has an AppCache manifest.
+     bool hasAppCacheManifest() const;
+ 
+@@ -1329,6 +1335,8 @@ private:
+     bool m_isSrcdocDocument;
+     bool m_isMobileDocument;
+ 
++    bool m_isCheckedUserTrackingPreference;
++
+     LayoutView* m_layoutView;
+ 
+ #if !ENABLE(OILPAN)
+diff --git a/Source/core/dom/DocumentParser.h b/Source/core/dom/DocumentParser.h
+index 425fc23..4c65196 100644
+--- a/Source/core/dom/DocumentParser.h
++++ b/Source/core/dom/DocumentParser.h
+@@ -56,6 +56,8 @@ public:
+     virtual TextResourceDecoder* decoder();
+     virtual void setHasAppendedData() { }
+ 
++    virtual void resumePreload() { }
++
+     // FIXME: append() should be private, but DocumentLoader and DOMPatchSupport uses it for now.
+     virtual void append(const String&) = 0;
+ 
+diff --git a/Source/core/fetch/FetchContext.cpp b/Source/core/fetch/FetchContext.cpp
+index 8b5b3ca..5e4ce70 100644
+--- a/Source/core/fetch/FetchContext.cpp
++++ b/Source/core/fetch/FetchContext.cpp
+@@ -82,6 +82,10 @@ void FetchContext::dispatchDidDownloadData(unsigned long, int, int)
+ {
+ }
+ 
++void FetchContext::dispatchDidFinishClassification(const String&)
++{
++}
++
+ void FetchContext::dispatchDidFinishLoading(unsigned long, double, int64_t)
+ {
+ }
+@@ -94,6 +98,10 @@ void FetchContext::sendRemainingDelegateMessages(unsigned long, const ResourceRe
+ {
+ }
+ 
++void FetchContext::didCheckUserTrackingPreference(bool enforcePreload)
++{
++}
++
+ void FetchContext::dispatchWillRequestResource(FetchRequest*)
+ {
+ }
+diff --git a/Source/core/fetch/FetchContext.h b/Source/core/fetch/FetchContext.h
+index a63e246..e02b42e 100644
+--- a/Source/core/fetch/FetchContext.h
++++ b/Source/core/fetch/FetchContext.h
+@@ -75,10 +75,13 @@ public:
+     virtual void dispatchDidReceiveResponse(unsigned long identifier, const ResourceResponse&, ResourceLoader* = 0);
+     virtual void dispatchDidReceiveData(unsigned long identifier, const char* data, int dataLength, int encodedDataLength);
+     virtual void dispatchDidDownloadData(unsigned long identifier, int dataLength, int encodedDataLength);
++    virtual void dispatchDidFinishClassification(const String&);
+     virtual void dispatchDidFinishLoading(unsigned long identifier, double finishTime, int64_t encodedDataLength);
+     virtual void dispatchDidFail(unsigned long identifier, const ResourceError&, bool isInternalRequest);
+     virtual void sendRemainingDelegateMessages(unsigned long identifier, const ResourceResponse&, int dataLength);
+ 
++    virtual void didCheckUserTrackingPreference(bool enforcePreload);
++    virtual bool shouldCheckUserTrackingPreference() const { return true; }
+     virtual bool shouldLoadNewResource(Resource::Type) const { return false; }
+     virtual void dispatchWillRequestResource(FetchRequest*);
+     virtual void willStartLoadingResource(ResourceRequest&);
+@@ -105,6 +108,8 @@ public:
+     virtual void addClientHintsIfNecessary(FetchRequest&);
+     virtual void addCSPHeaderIfNecessary(Resource::Type, FetchRequest&);
+ 
++    virtual bool isFrameFetchContext() { return false; }
++
+ protected:
+     FetchContext() { }
+ };
+diff --git a/Source/core/fetch/ResourceFetcher.cpp b/Source/core/fetch/ResourceFetcher.cpp
+index 1fd1930..dfcce0e 100644
+--- a/Source/core/fetch/ResourceFetcher.cpp
++++ b/Source/core/fetch/ResourceFetcher.cpp
+@@ -58,6 +58,14 @@
+ #include "wtf/text/CString.h"
+ #include "wtf/text/WTFString.h"
+ 
++#include "base/logging.h"
++#include "base/trace_event/tracking_control_trace.h"
++#include "core/loader/FrameFetchContext.h"
++#include "core/loader/DocumentLoader.h"
++#include "core/tmon/ClassificationModel.h"
++#include "core/tmon/HTML2TextContent.h"
++#include "core/tmon/TrackingControl.h"
++
+ #define PRELOAD_DEBUG 0
+ 
+ using blink::WebURLRequest;
+@@ -471,6 +479,14 @@ void ResourceFetcher::requestLoadStarted(Resource* resource, const FetchRequest&
+ 
+ ResourcePtr<Resource> ResourceFetcher::requestResource(Resource::Type type, FetchRequest& request)
+ {
++    if (IsTrackingControlEnabled() && type == Resource::MainResource) {
++      ResourceLoaderOptions _options = request.options();
++      _options.dataBufferingPolicy = BufferData;
++      request.setOptions(_options);
++//      TMON_DEBUG("ResourceFetcher::requestResource : "
++//                 << request.resourceRequest().url().elidedString().latin1().data() << "\n");
++    }
++
+     ASSERT(request.options().synchronousPolicy == RequestAsynchronously || type == Resource::Raw);
+ 
+     TRACE_EVENT0("blink", "ResourceFetcher::requestResource");
+@@ -1034,6 +1050,46 @@ bool ResourceFetcher::scheduleArchiveLoad(Resource* resource, const ResourceRequ
+ void ResourceFetcher::didFinishLoading(Resource* resource, double finishTime, int64_t encodedDataLength)
+ {
+     TRACE_EVENT_ASYNC_END0("blink.net", "Resource", resource);
++
++    FrameFetchContext &ffctx = static_cast<FrameFetchContext&>(context());
++    /*if (resource->type() == Resource::MainResource && ffctx.isMainFrame()) {*/
++      //TMON_TRACE(std::string("ResourceFetcher::didFinishLoading@") + resource->url().string().latin1().data());
++      //TMON_TRACE_FLUSH();
++    /*}*/
++
++    // Check if this response is for main resource in private browsing mode.
++    if (IsTrackingControlEnabled()) {
++      if (resource->type() == Resource::MainResource
++          && ffctx.isMainFrame()) {
++        if (context().shouldCheckUserTrackingPreference()) {
++          String result = "";
++          SharedBuffer *buffer = resource->resourceBuffer();
++          if (buffer) {
++            if (HTML2TextContent::initialize()) {
++              String text = HTML2TextContent::html2textContent(buffer->data(), buffer->size());
++              // TMON_MSG("ResourceFetcher::didFinishLoading() " << resource->url().string().latin1().data());
++              // TMON_MSG("ResourceFetcher::didFinishLoading() : textContent : \n" << text.utf8().data()  << "\n");
++              if (text.length() >= 16)
++                result = Classification::predict(text.utf8().data());
++            }
++          }
++          /*TMON_TRACE("ResourceFetcher::didFinishLoading (ask browser)");*/
++          /*TMON_TRACE_FLUSH();*/
++          context().dispatchDidFinishClassification(result);
++        }
++        else {
++          // TMON_MSG("ResourceFetcher::shouldNotCheckUserTrackingPreference() " << resource->url().string().latin1().data() << "\n");
++          /*TMON_TRACE("ResourceFetcher::didFinishLoading (resume preloading)");*/
++          /*TMON_TRACE_FLUSH();*/
++          context().didCheckUserTrackingPreference(true);
++        }
++      }
++    }
++    /*if (resource->type() == Resource::MainResource && ffctx.isMainFrame()) {*/
++      //TMON_TRACE(std::string("ResourceFetcher::MainFrameLoadFinished@") + resource->url().string().latin1().data());
++      //TMON_TRACE_FLUSH();
++    /*}*/
++
+     RefPtrWillBeRawPtr<ResourceFetcher> protect(this);
+     willTerminateResourceLoader(resource->loader());
+ 
+diff --git a/Source/core/html/parser/HTMLDocumentParser.cpp b/Source/core/html/parser/HTMLDocumentParser.cpp
+index 5fa1975..4674326 100644
+--- a/Source/core/html/parser/HTMLDocumentParser.cpp
++++ b/Source/core/html/parser/HTMLDocumentParser.cpp
+@@ -54,6 +54,9 @@
+ #include "wtf/RefCounted.h"
+ #include "wtf/TemporaryChange.h"
+ 
++#include "base/logging.h"
++#include "base/trace_event/tracking_control_trace.h"
++
+ namespace blink {
+ 
+ using namespace HTMLNames;
+@@ -355,7 +358,9 @@ void HTMLDocumentParser::didReceiveParsedChunkFromBackgroundParser(PassOwnPtr<Pa
+     // ApplicationCache needs to be initialized before issuing preloads.
+     // We suspend preload until HTMLHTMLElement is inserted and
+     // ApplicationCache is initialized.
+-    if (!document()->documentElement()) {
++    // If the document is not checked for user tracking preference yet,
++    // then don't preload yet but append to the preloading queue.
++    if (!document()->documentElement() || !document()->isCheckedUserTrackingPreference()) {
+         for (auto& request : chunk->preloads)
+             m_queuedPreloads.append(request.release());
+     } else {
+@@ -494,8 +499,14 @@ size_t HTMLDocumentParser::processParsedChunkFromBackgroundParser(PassOwnPtr<Par
+         if (isStopped())
+             break;
+ 
+-        if (!m_queuedPreloads.isEmpty() && document()->documentElement())
++        // Only activate the preloading if the document has been checked
++        // user tracking preference with browser.
++        if (!m_queuedPreloads.isEmpty()
++            && document()->documentElement() && document()->isCheckedUserTrackingPreference()) {
++            // LOG(ERROR) << "HTMLDocumentParser::processParsedChunkFromBackgroundParser"
++            //            << ": Resuming preload\n";
+             m_preloader->takeAndPreload(m_queuedPreloads);
++        }
+ 
+         if (isWaitingForScripts()) {
+             ASSERT(it + 1 == tokens->end()); // The </script> is assumed to be the last token of this bunch.
+@@ -543,7 +554,7 @@ void HTMLDocumentParser::pumpPendingSpeculations()
+ 
+     // FIXME: Here should never be reached when there is a blocking script,
+     // but it happens in unknown scenarios. See https://crbug.com/440901
+-    if (isWaitingForScripts()) {
++    if (isWaitingForScripts() || !document()->isCheckedUserTrackingPreference()) {
+         m_parserScheduler->scheduleForResume();
+         return;
+     }
+@@ -1006,6 +1017,14 @@ void HTMLDocumentParser::appendCurrentInputStreamToPreloadScannerAndScan()
+     m_preloadScanner->scan(m_preloader.get(), document()->baseElementURL());
+ }
+ 
++void HTMLDocumentParser::resumePreload()
++{
++  /*TMON_TRACE("HTMLDocumentParser::resumePreload");*/
++  /*TMON_TRACE_FLUSH();*/
++  m_preloader->takeAndPreload(m_queuedPreloads);
++}
++
++
+ void HTMLDocumentParser::notifyScriptLoaded(Resource* cachedResource)
+ {
+     // pumpTokenizer can cause this parser to be detached from the Document,
+diff --git a/Source/core/html/parser/HTMLDocumentParser.h b/Source/core/html/parser/HTMLDocumentParser.h
+index 756aa31..020c2fd 100644
+--- a/Source/core/html/parser/HTMLDocumentParser.h
++++ b/Source/core/html/parser/HTMLDocumentParser.h
+@@ -144,6 +144,8 @@ private:
+     virtual bool hasPreloadScanner() const override final { return m_preloadScanner.get() && !shouldUseThreading(); }
+     virtual void appendCurrentInputStreamToPreloadScannerAndScan() override final;
+ 
++    virtual void resumePreload() override final;
++
+     void startBackgroundParser();
+     void stopBackgroundParser();
+     void validateSpeculations(PassOwnPtr<ParsedChunk> lastChunk);
+diff --git a/Source/core/loader/DocumentLoader.cpp b/Source/core/loader/DocumentLoader.cpp
+index d80bd42..dd86e18 100644
+--- a/Source/core/loader/DocumentLoader.cpp
++++ b/Source/core/loader/DocumentLoader.cpp
+@@ -70,6 +70,8 @@
+ #include "wtf/Assertions.h"
+ #include "wtf/text/WTFString.h"
+ 
++#include "base/logging.h"
++
+ namespace blink {
+ 
+ static bool isArchiveMIMEType(const String& mimeType)
+@@ -548,6 +550,11 @@ bool DocumentLoader::loadingMultipartContent() const
+     return mainResourceLoader() ? mainResourceLoader()->loadingMultipartContent() : false;
+ }
+ 
++void DocumentLoader::didCheckUserTrackingPreference(bool enforcePreload)
++{
++  document()->didCheckUserTrackingPreference(enforcePreload);
++}
++
+ void DocumentLoader::detachFromFrame()
+ {
+     ASSERT(m_frame);
+diff --git a/Source/core/loader/DocumentLoader.h b/Source/core/loader/DocumentLoader.h
+index 843027e4..639e4c1 100644
+--- a/Source/core/loader/DocumentLoader.h
++++ b/Source/core/loader/DocumentLoader.h
+@@ -47,6 +47,8 @@
+ #include "wtf/HashSet.h"
+ #include "wtf/RefPtr.h"
+ 
++#include "core/dom/Document.h"
++
+ namespace blink {
+     class ApplicationCacheHost;
+     class ResourceFetcher;
+@@ -139,6 +141,8 @@ namespace blink {
+ 
+         bool loadingMultipartContent() const;
+ 
++        void didCheckUserTrackingPreference(bool enforcePreload);
++
+     protected:
+         DocumentLoader(LocalFrame*, const ResourceRequest&, const SubstituteData&);
+ 
+diff --git a/Source/core/loader/EmptyClients.h b/Source/core/loader/EmptyClients.h
+index 2089427..43d7143 100644
+--- a/Source/core/loader/EmptyClients.h
++++ b/Source/core/loader/EmptyClients.h
+@@ -197,9 +197,12 @@ public:
+     virtual void dispatchDidFailLoad(const ResourceError&, HistoryCommitType) override { }
+     virtual void dispatchDidFinishDocumentLoad() override { }
+     virtual void dispatchDidFinishLoad() override { }
++    virtual void dispatchDidFinishClassification(const String&) override { }
++
+     virtual void dispatchDidFirstVisuallyNonEmptyLayout() override { }
+     virtual void dispatchDidChangeThemeColor() override { };
+ 
++    virtual bool shouldCheckUserTrackingPreference() const override { return true; }
+     virtual NavigationPolicy decidePolicyForNavigation(const ResourceRequest&, DocumentLoader*, NavigationPolicy) override;
+ 
+     virtual void dispatchWillSendSubmitEvent(HTMLFormElement*) override;
+diff --git a/Source/core/loader/FrameFetchContext.cpp b/Source/core/loader/FrameFetchContext.cpp
+index 2501a98..52e52d3 100644
+--- a/Source/core/loader/FrameFetchContext.cpp
++++ b/Source/core/loader/FrameFetchContext.cpp
+@@ -248,6 +248,10 @@ void FrameFetchContext::dispatchDidDownloadData(unsigned long identifier, int da
+     InspectorInstrumentation::didReceiveData(frame(), identifier, 0, dataLength, encodedDataLength);
+ }
+ 
++void FrameFetchContext::dispatchDidFinishClassification(const String& result) {
++    frame()->loader().client()->dispatchDidFinishClassification(result);
++}
++
+ void FrameFetchContext::dispatchDidFinishLoading(unsigned long identifier, double finishTime, int64_t encodedDataLength)
+ {
+     frame()->loader().progress().completeProgress(identifier);
+@@ -280,6 +284,16 @@ void FrameFetchContext::sendRemainingDelegateMessages(unsigned long identifier,
+     dispatchDidFinishLoading(identifier, 0, 0);
+ }
+ 
++void FrameFetchContext::didCheckUserTrackingPreference(bool enforcePreload)
++{
++  m_documentLoader->didCheckUserTrackingPreference(enforcePreload);
++}
++
++bool FrameFetchContext::shouldCheckUserTrackingPreference() const
++{
++    return frame()->loader().client()->shouldCheckUserTrackingPreference();
++}
++
+ bool FrameFetchContext::shouldLoadNewResource(Resource::Type type) const
+ {
+     if (!m_documentLoader)
+diff --git a/Source/core/loader/FrameFetchContext.h b/Source/core/loader/FrameFetchContext.h
+index 4d3b3ab..e8a6a12 100644
+--- a/Source/core/loader/FrameFetchContext.h
++++ b/Source/core/loader/FrameFetchContext.h
+@@ -76,10 +76,13 @@ public:
+     void dispatchDidReceiveResponse(unsigned long identifier, const ResourceResponse&, ResourceLoader* = 0) override;
+     void dispatchDidReceiveData(unsigned long identifier, const char* data, int dataLength, int encodedDataLength) override;
+     void dispatchDidDownloadData(unsigned long identifier, int dataLength, int encodedDataLength)  override;
++    void dispatchDidFinishClassification(const String&) override;
+     void dispatchDidFinishLoading(unsigned long identifier, double finishTime, int64_t encodedDataLength) override;
+     void dispatchDidFail(unsigned long identifier, const ResourceError&, bool isInternalRequest) override;
+     void sendRemainingDelegateMessages(unsigned long identifier, const ResourceResponse&, int dataLength) override;
+ 
++    void didCheckUserTrackingPreference(bool enforcePreload) override;
++    bool shouldCheckUserTrackingPreference() const override;
+     bool shouldLoadNewResource(Resource::Type) const override;
+     void dispatchWillRequestResource(FetchRequest*) override;
+     void willStartLoadingResource(ResourceRequest&) override;
+@@ -106,6 +109,8 @@ public:
+     void addClientHintsIfNecessary(FetchRequest&) override;
+     void addCSPHeaderIfNecessary(Resource::Type, FetchRequest&) override;
+ 
++    bool isFrameFetchContext() override { return true; }
++
+     DECLARE_VIRTUAL_TRACE();
+ 
+ private:
+diff --git a/Source/core/loader/FrameLoaderClient.h b/Source/core/loader/FrameLoaderClient.h
+index 8ddf600..72f140e 100644
+--- a/Source/core/loader/FrameLoaderClient.h
++++ b/Source/core/loader/FrameLoaderClient.h
+@@ -93,10 +93,12 @@ namespace blink {
+         virtual void dispatchDidFailProvisionalLoad(const ResourceError&, HistoryCommitType) = 0;
+         virtual void dispatchDidFailLoad(const ResourceError&, HistoryCommitType) = 0;
+         virtual void dispatchDidFinishDocumentLoad() = 0;
++        virtual void dispatchDidFinishClassification(const String&) = 0;
+         virtual void dispatchDidFinishLoad() = 0;
+         virtual void dispatchDidFirstVisuallyNonEmptyLayout() = 0;
+         virtual void dispatchDidChangeThemeColor() = 0;
+ 
++        virtual bool shouldCheckUserTrackingPreference() const = 0;
+         virtual NavigationPolicy decidePolicyForNavigation(const ResourceRequest&, DocumentLoader*, NavigationPolicy) = 0;
+ 
+         virtual void dispatchWillRequestResource(FetchRequest*) { }
+diff --git a/Source/core/tmon/ClassificationModel.cpp b/Source/core/tmon/ClassificationModel.cpp
+new file mode 100644
+index 0000000..8440e31
+--- /dev/null
++++ b/Source/core/tmon/ClassificationModel.cpp
+@@ -0,0 +1,119 @@
++#include "config.h"
++#include "ClassificationModel.h"
++#include <vector>
++#include <cmath>
++#include <cstdlib>
++#include <algorithm>
++#include <limits>
++//#include <regex>
++
++namespace blink {
++
++const int Classification::vocabulary_size = 4870;
++const int Classification::num_classes = 78;
++const std::string Classification::class_names[] = {"art-and-entertainment/books-and-literature", "art-and-entertainment/movies-and-tv", "art-and-entertainment/music", "art-and-entertainment/other", "art-and-entertainment/shows-and-events", "art-and-entertainment/visual-art-and-design", "automotive-and-vehicles/cars", "automotive-and-vehicles/other", "automotive-and-vehicles/vehicle-brands", "business-and-industrial/advertising-and-marketing", "business-and-industrial/agriculture-and-forestry", "business-and-industrial/business-operations", "business-and-industrial/energy", "business-and-industrial/other", "careers", "education/graduate-school", "education/other", "education/school", "family-and-parenting/children", "family-and-parenting/other", "finance/other", "finance/personal-finance", "food-and-drink/beverages", "food-and-drink/food", "food-and-drink/other", "health-and-fitness/disease", "health-and-fitness/disorders", "health-and-fitness/drugs", "health-and-fitness/other", "hobbies-and-interests/arts-and-crafts", "hobbies-and-interests/games", "hobbies-and-interests/other", "home-and-garden/bed-and-bath", "home-and-garden/home-furnishings", "home-and-garden/home-improvement-and-repair", "home-and-garden/other", "law-govt-and-politics/armed-forces", "law-govt-and-politics/government", "law-govt-and-politics/law-enforcement", "law-govt-and-politics/legal-issues", "law-govt-and-politics/other", "news", "pets/dogs", "pets/other", "real-estate/apartments", "real-estate/other", "religion-and-spirituality/christianity", "religion-and-spirituality/other", "science/medicine", "science/other", "science/social-science", "science/weather", "shopping/auctions", "shopping/gifts", "shopping/other", "shopping/resources", "society/crime", "society/dating", "society/other", "society/sex", "society/welfare", "sports/fishing", "sports/golf", "sports/other", "style-and-fashion/clothing", "style-and-fashion/jewelry", "style-and-fashion/other", "technology-and-computing/consumer-electronics", "technology-and-computing/hardware", "technology-and-computing/internet-technology", "technology-and-computing/other", "technology-and-computing/programming-languages", "technology-and-computing/software", "travel/other", "travel/tourist-destinations", "travel/tourist-facilities", "travel/transports", "travel/vacation-rentals"};
++const double Classification::class_intercepts[] = {0}; // Model is not permitted for release
++const double Classification::idf[] = {0}; // Model is not permitted for release
++const double Classification::class_coefs[] = {0}; // Model is not permitted for release
++const std::map<std::string, int> Classification::vocabulary = Classification::initializeVocabulary();
++std::map<std::string, int> Classification::initializeVocabulary() {
++std::map<std::string, int> m;
++return m;
++}
++
++String Classification::predict(const char* data) {
++  std::string text(data);
++  int *token_count = new int[vocabulary_size];
++  double *sublinear_tfidf = new double[vocabulary_size];
++  memset(token_count, 0, sizeof(int)*vocabulary_size);
++  memset(sublinear_tfidf, 0, sizeof(double)*vocabulary_size);
++
++  /*std::regex re("\\w+");*/
++  //const std::sregex_token_iterator end;
++  //std::vector<std::string> tokens;
++  //for (std::sregex_token_iterator i(text.begin(), text.end(), re); i != end; ++i) {
++    //auto it = vocabulary.find(*i);
++    //if (it != vocabulary.end()) {
++      //token_count[it->second]++;
++    //}
++  /*}*/
++  
++  std::size_t prev_pos = 0, pos;
++  while ((pos = text.find_first_of(" \t\n\v\f\r,./<>?;\':\"[]{}\\|`~!@#$%^&*()-=_+", prev_pos)) != std::string::npos) {
++    if (pos > prev_pos) {
++      std::string word = text.substr(prev_pos, pos-prev_pos);
++      std::transform(word.begin(), word.end(), word.begin(), ::tolower);
++      auto it = vocabulary.find(word);
++      if (it != vocabulary.end()) {
++        token_count[it->second]++;
++      }
++    }
++    prev_pos = pos + 1;
++  }
++  if (prev_pos < text.length()) {
++    std::string word = text.substr(prev_pos, std::string::npos);
++    std::transform(word.begin(), word.end(), word.begin(), ::tolower);
++    auto it = vocabulary.find(word);
++    if (it != vocabulary.end()) {
++      token_count[it->second]++;
++    }
++  }
++
++  double sum_ = 0;
++  for (int i = 0; i < vocabulary_size; ++i) {
++    if (token_count[i] == 0) {
++      sublinear_tfidf[i] = 0;
++    }
++    else {
++      //sublinear_tfidf[i] = (std::log(token_count[i]) + 1) * idf[i];
++      sublinear_tfidf[i] = (std::log(token_count[i]) + 1); // Model is not permitted for release
++    }
++    sum_ += (sublinear_tfidf[i] * sublinear_tfidf[i]);
++  }
++  sum_ = std::sqrt(sum_);
++  if (sum_ > 0) {
++    for (int i = 0; i < vocabulary_size; ++i) {
++      sublinear_tfidf[i] /= sum_;
++    }
++  }
++
++  std::string prediction = "";
++  int max_score_index = -1;
++  double max_score = -std::numeric_limits<double>::infinity();
++  for (int i = 0; i < num_classes; ++i) {
++    std::string class_name = class_names[i];
++    int pred_class = 0;
++    //double class_intercept = class_intercepts[i];
++    double class_intercept = 0.1; // Model is not permitted for release
++    double score = class_intercept;
++    for (int k = 0; k < vocabulary_size; ++k) {
++      //score += sublinear_tfidf[k] * class_coefs[i*vocabulary_size+k];
++      score += sublinear_tfidf[k]; // Model is not permitted for release
++    }
++    if (score > 0) {
++      pred_class = 1;
++        if (score > max_score) {
++          max_score = score;
++          max_score_index = i;
++        }
++    }
++    /*if (pred_class > 0) {*/
++      //prediction += class_name+"\t";
++    /*}*/
++  }
++  srand(time(NULL)); // Model is not permitted for release
++  max_score_index = rand() % num_classes; // Model is not permitted for release
++  if (max_score_index >= 0) {
++    prediction += class_names[max_score_index] + "\t";
++  }
++
++  if (prediction.length() > 0) {
++    prediction = prediction.substr(0, prediction.length()-1);
++  }
++
++  delete[] token_count;
++  delete[] sublinear_tfidf;
++  return String(prediction.c_str());
++}
++
++} //namespace blink
+diff --git a/Source/core/tmon/ClassificationModel.h b/Source/core/tmon/ClassificationModel.h
+new file mode 100644
+index 0000000..7ffc572
+--- /dev/null
++++ b/Source/core/tmon/ClassificationModel.h
+@@ -0,0 +1,34 @@
++#ifndef ClassificationModel_h 
++#define ClassificationModel_h 
++
++#include "core/CoreExport.h"
++#include <string>
++#include <map>
++//#include <cstring>
++#include "wtf/text/WTFString.h"
++
++namespace blink {
++
++class CORE_EXPORT Classification {
++public:
++  Classification();
++
++  virtual ~Classification();
++
++//  static std::string predict(const std::string &text);
++  static String predict(const char* data);
++
++private:
++  static const int vocabulary_size;
++  static const int num_classes;
++  static const std::string class_names[];
++  static const double class_intercepts[];
++  static const double idf[];
++  static const double class_coefs[];
++  static const std::map<std::string, int> vocabulary;
++  static std::map<std::string, int> initializeVocabulary();
++};
++
++} // namespace blink
++
++#endif // ClassificationModel_h 
+diff --git a/Source/core/tmon/HTML2TextContent.cpp b/Source/core/tmon/HTML2TextContent.cpp
+new file mode 100644
+index 0000000..98f8205
+--- /dev/null
++++ b/Source/core/tmon/HTML2TextContent.cpp
+@@ -0,0 +1,492 @@
++#include "config.h"
++#include "core/tmon/HTML2TextContent.h"
++
++#include <cstdlib>
++#include <cmath>
++#include <algorithm>
++#include <string>
++#include <sstream>
++//#include <regex>
++#include "third_party/libxml/src/include/libxml/HTMLparser.h"
++#include "third_party/libxml/src/include/libxml/tree.h"
++#include "third_party/libxml/src/include/libxml/xpath.h"
++
++#include "base/logging.h"
++#include "core/tmon/TrackingControl.h"
++
++namespace blink {
++
++HashSet<String> *HTML2TextContent::_ignoredTags = new HashSet<String>();
++HashMap<String, String> *HTML2TextContent::_tags = new HashMap<String, String>();
++bool HTML2TextContent::is_tags_initialized = false;
++
++HTML2TextContent::HTML2TextContent() {
++}
++
++bool HTML2TextContent::initialize() {
++  if (!is_tags_initialized) {
++//    _ignoredTags = new HashSet<String>();
++//    _tags = new HashMap<String, String>();
++
++    _ignoredTags->add("script");
++  //  _ignoredTags->add("noscript");
++    _ignoredTags->add("style");
++    _ignoredTags->add("object");
++    _ignoredTags->add("comment");
++
++    _tags->add("address", "\n");
++    _tags->add("blockquote", "\n");
++    _tags->add("div", "\n");
++    _tags->add("dl", "\n");
++    _tags->add("dd", "\t");
++    _tags->add("fieldset", "\n");
++    _tags->add("form", "\n");
++    _tags->add("h1", "\n");
++    _tags->add("h2", "\n");
++    _tags->add("h3", "\n");
++    _tags->add("h4", "\n");
++    _tags->add("h5", "\n");
++    _tags->add("h6", "\n");
++    _tags->add("p", "\n");
++    _tags->add("table", "\n");
++    _tags->add("ul", "\n");
++    _tags->add("ol", "\n");
++    _tags->add("li", "\n");
++    _tags->add("br", "\n");
++    _tags->add("td", "\t");
++    _tags->add("tr", "\n");
++    _tags->add("pre", "\n");
++    _tags->add("button", "\t");
++
++    is_tags_initialized = true;
++  }
++  return is_tags_initialized;
++}
++
++template<typename T>
++std::string HTML2TextContent::numToStr(T value) {
++  std::ostringstream os;
++  os << value;
++  return os.str();
++}
++
++template<typename T>
++T HTML2TextContent::strToNum(const std::string& str) {
++  T value;
++  std::istringstream is(str);
++  is >> value;
++  return value;
++}
++
++int HTML2TextContent::CountChar(xmlNodePtr cur, int level) {
++  int char_num = 0;
++  if (!_ignoredTags->contains(cur->name)) {
++    if (cur->type == XML_TEXT_NODE && cur->content) {
++      char_num = std::strlen(reinterpret_cast<const char*>(cur->content));
++      char_num = (char_num > 1) ? char_num : 0;
++    }
++    xmlNodePtr child = cur->xmlChildrenNode;
++    while (child != NULL) {
++      char_num += CountChar(child, level+1);
++      child = child->next;
++    }
++  }
++  xmlNewProp(cur, reinterpret_cast<const xmlChar*>("kg_char_num"), reinterpret_cast<const xmlChar*>(numToStr<int>(char_num).c_str()));
++//  PRIV_MSG("CountChar Name: <" << cur->name << "> " << char_num);
++  return char_num;
++}
++
++int HTML2TextContent::CountTag(xmlNodePtr cur, int level) {
++  int tag_num = 0;
++  if (!_ignoredTags->contains(cur->name)) {
++    xmlNodePtr child = cur->xmlChildrenNode;
++    while (child != NULL) {
++      tag_num += CountTag(child, level+1);
++      if (child->type != XML_TEXT_NODE) {
++        tag_num++;
++      }
++      child = child->next;
++    }
++  }
++  if (tag_num == 0) {
++    tag_num = 1;
++  }
++  xmlNewProp(cur, reinterpret_cast<const xmlChar*>("kg_tag_num"), reinterpret_cast<const xmlChar*>(numToStr<int>(tag_num).c_str()));
++//  PRIV_MSG("CountTag Name: <" << cur->name << "> " << tag_num);
++  return tag_num;
++}
++
++void HTML2TextContent::UpdateLinkChar(xmlNodePtr cur) {
++  xmlNodePtr child = cur->xmlChildrenNode;
++  while (child != NULL) {
++    xmlChar *char_num = xmlGetProp(cur, reinterpret_cast<const xmlChar*>("kg_char_num"));
++    xmlSetProp(cur, reinterpret_cast<const xmlChar*>("kg_link_char_num"), char_num);
++    UpdateLinkChar(child);
++    child = child->next;
++  }
++}
++
++int HTML2TextContent::CountLinkChar(xmlNodePtr cur, int level) {
++  int char_num = 0;
++  if (!_ignoredTags->contains(cur->name)) {
++    if (xmlStrcmp(cur->name, (const xmlChar*)"a") == 0
++        || xmlStrcmp(cur->name, (const xmlChar*)"button") == 0
++        || xmlStrcmp(cur->name, (const xmlChar*)"select") == 0) {
++      char_num = strToNum<int>(reinterpret_cast<const char*>(xmlGetProp(cur, reinterpret_cast<const xmlChar*>("kg_char_num"))));
++    }
++    xmlNodePtr child = cur->xmlChildrenNode;
++    while (child != NULL) {
++      char_num += CountLinkChar(child, level+1);
++      child = child->next;
++    }
++  }
++  xmlNewProp(cur, reinterpret_cast<const xmlChar*>("kg_link_char_num"), reinterpret_cast<const xmlChar*>(numToStr<int>(char_num).c_str()));
++//  PRIV_MSG("CountLinkChar Name: <" << cur->name << "> " << char_num);
++  return char_num;
++}
++
++void HTML2TextContent::UpdateLinkTag(xmlNodePtr cur) {
++  xmlNodePtr child = cur->xmlChildrenNode;
++  while (child != NULL) {
++    xmlChar *tag_num = xmlGetProp(cur, reinterpret_cast<const xmlChar*>("kg_tag_num"));
++    xmlSetProp(cur, reinterpret_cast<const xmlChar*>("kg_link_tag_num"), tag_num);
++    UpdateLinkTag(child);
++    child = child->next;
++  }
++}
++
++int HTML2TextContent::CountLinkTag(xmlNodePtr cur, int level) {
++  int tag_num = 0;
++  if (!_ignoredTags->contains(cur->name)) {
++    if (xmlStrcmp(cur->name, (const xmlChar*)"a") == 0
++        || xmlStrcmp(cur->name, (const xmlChar*)"button") == 0
++        || xmlStrcmp(cur->name, (const xmlChar*)"select") == 0) {
++      tag_num = strToNum<int>(reinterpret_cast<const char*>(xmlGetProp(cur, reinterpret_cast<const xmlChar*>("kg_tag_num"))));
++    }
++    xmlNodePtr child = cur->xmlChildrenNode;
++    while (child != NULL) {
++      tag_num += CountLinkTag(child, level+1);
++      child = child->next;
++    }
++  }
++  xmlNewProp(cur, reinterpret_cast<const xmlChar*>("kg_link_tag_num"), reinterpret_cast<const xmlChar*>(numToStr<int>(tag_num).c_str()));
++//  PRIV_MSG("CountLinkTag Name: <" << cur->name << "> " << tag_num);
++  return tag_num;
++}
++
++void HTML2TextContent::ComputeTextDensity(xmlNodePtr cur, double ratio, int level) {
++  if (!_ignoredTags->contains(cur->name) && cur->type != XML_TEXT_NODE) {
++    int char_num = strToNum<int>(reinterpret_cast<const char*>(xmlGetProp(cur, reinterpret_cast<const xmlChar*>("kg_char_num"))));
++    int tag_num = strToNum<int>(reinterpret_cast<const char*>(xmlGetProp(cur, reinterpret_cast<const xmlChar*>("kg_tag_num"))));
++    int link_char_num = strToNum<int>(reinterpret_cast<const char*>(xmlGetProp(cur, reinterpret_cast<const xmlChar*>("kg_link_char_num"))));
++    int link_tag_num = strToNum<int>(reinterpret_cast<const char*>(xmlGetProp(cur, reinterpret_cast<const xmlChar*>("kg_link_tag_num"))));
++
++    double text_density = 0.0;
++    if (char_num > 0) {
++      int un_link_char_num = char_num - link_char_num;
++      if (tag_num == 0) {
++        tag_num = 1;
++      }
++      if (link_char_num == 0) {
++        link_char_num = 1;
++      }
++      if (link_tag_num == 0) {
++        link_tag_num = 1;
++      }
++      if (un_link_char_num) {
++        un_link_char_num = 1;
++      }
++
++      text_density = (1.0 * char_num / tag_num) * std::log((1.0 * char_num * tag_num / link_char_num / link_tag_num))
++        / std::log(std::log(1.0 * char_num * link_char_num / un_link_char_num + ratio * char_num + exp(1.0)));
++    }
++    xmlNewProp(cur, reinterpret_cast<const xmlChar*>("kg_text_density"), reinterpret_cast<const xmlChar*>(numToStr<double>(text_density).c_str()));
++
++//    PRIV_MSG("ComputeTextDensity Name: <" << cur->name << "> " << text_density);
++
++    xmlNodePtr child = cur->xmlChildrenNode;
++    while (child != NULL) {
++      ComputeTextDensity(child, ratio, level+1);
++      child = child->next;
++    }
++  }
++}
++
++void HTML2TextContent::ComputeDensitySum(xmlNodePtr cur, double ratio, int level) {
++  if (!_ignoredTags->contains(cur->name) && cur->type != XML_TEXT_NODE) {
++    double density_sum = 0.0;
++
++    xmlNodePtr child = cur->xmlChildrenNode;
++    while (child != NULL) {
++      if (!_ignoredTags->contains(child->name) && child->type != XML_TEXT_NODE) {
++        double text_density = strToNum<double>(reinterpret_cast<const char*>(xmlGetProp(child, reinterpret_cast<const xmlChar*>("kg_text_density"))));
++        density_sum += text_density;
++        ComputeDensitySum(child, ratio, level+1);
++      }
++      child = child->next;
++    }
++    if (density_sum == 0.0) {
++      density_sum = strToNum<double>(reinterpret_cast<const char*>(xmlGetProp(cur, reinterpret_cast<const xmlChar*>("kg_text_density"))));
++    }
++    xmlNewProp(cur, reinterpret_cast<const xmlChar*>("kg_density_sum"), reinterpret_cast<const xmlChar*>(numToStr<double>(density_sum).c_str()));
++//    PRIV_MSG("ComputeDensitySum Name: <" << cur->name << "> " << density_sum);
++  }
++}
++
++double HTML2TextContent::FindMaxDensitySum(xmlNodePtr cur, xmlNodePtr &maxNode) {
++  double max_density_sum = 0.0;
++  double max_node_density_sum = 0.0;
++  if (!_ignoredTags->contains(cur->name) && cur->type != XML_TEXT_NODE) {
++    double density_sum = strToNum<double>(reinterpret_cast<const char*>(xmlGetProp(cur, reinterpret_cast<const xmlChar*>("kg_density_sum"))));
++    max_density_sum = density_sum;
++    double temp_max_density_sum = 0.0;
++    xmlNodePtr child = cur->xmlChildrenNode;
++    while (child != NULL) {
++      temp_max_density_sum = FindMaxDensitySum(child, maxNode);
++      if (temp_max_density_sum - max_density_sum > std::numeric_limits<double>::epsilon()) {
++        max_density_sum = temp_max_density_sum;
++//        PRIV_MSG("FindMaxDensitySum Name: <" << cur->name << "> child=<" << child->name << ">, sum=" << max_density_sum);
++        if (maxNode != NULL) {
++          max_node_density_sum = strToNum<double>(reinterpret_cast<const char*>(xmlGetProp(maxNode, reinterpret_cast<const xmlChar*>("kg_density_sum"))));
++          if (max_density_sum - max_node_density_sum > std::numeric_limits<double>::epsilon()) {
++            maxNode = child;
++          }
++        }
++        else {
++          maxNode = child;
++        }
++      }
++      child = child->next;
++    }
++    if (max_density_sum - density_sum < std::numeric_limits<double>::epsilon()) {
++      if (maxNode != NULL) {
++        max_node_density_sum = strToNum<double>(reinterpret_cast<const char*>(xmlGetProp(maxNode, reinterpret_cast<const xmlChar*>("kg_density_sum"))));
++        if (max_density_sum - max_node_density_sum > std::numeric_limits<double>::epsilon()) {
++//          PRIV_MSG("FindMaxDensitySum Name: <" << cur->name << ">, sum=" << max_density_sum);
++          maxNode = cur;
++        }
++      }
++      else {
++//        PRIV_MSG("FindMaxDensitySum Name: <" << cur->name << ">, sum=" << max_density_sum);
++        maxNode = cur;
++      }
++    }
++    xmlNewProp(cur, reinterpret_cast<const xmlChar*>("kg_max_density_sum"), reinterpret_cast<const xmlChar*>(numToStr<double>(max_density_sum).c_str()));
++  }
++  return max_density_sum;
++}
++
++void HTML2TextContent::HTML2TextContent::SetMark(xmlNodePtr cur, int mark, bool setChild) {
++  if (!_ignoredTags->contains(cur->name) && cur->type != XML_TEXT_NODE) {
++//    PRIV_MSG("SetMark1 " << cur->name << " mark=" << mark);
++    xmlSetProp(cur, reinterpret_cast<const xmlChar*>("kg_mark"), reinterpret_cast<const xmlChar*>(numToStr<int>(mark).c_str()));
++    if (setChild) {
++      xmlNodePtr child = cur->xmlChildrenNode;
++      while (child != NULL) {
++        SetMark(child, mark, setChild);
++        child = child->next;
++      }
++    }
++  }
++}
++
++void HTML2TextContent::SetMark(xmlNodePtr cur, double threshold, int mark, bool setChild) {
++  if (!_ignoredTags->contains(cur->name) && cur->type != XML_TEXT_NODE) {
++    double value = strToNum<double>(reinterpret_cast<const char*>(xmlGetProp(cur, reinterpret_cast<const xmlChar*>("kg_text_density"))));
++    if (value - threshold > std::numeric_limits<double>::epsilon()) {
++//      PRIV_MSG("SetMark2 " << cur->name << " mark=" << mark << ", threshold=" << threshold << ", value=" << value);
++      xmlSetProp(cur, reinterpret_cast<const xmlChar*>("kg_mark"), reinterpret_cast<const xmlChar*>(numToStr<int>(mark).c_str()));
++    }
++    if (setChild) {
++      xmlNodePtr child = cur->xmlChildrenNode;
++      while (child != NULL) {
++        SetMark(child, threshold, mark, setChild);
++        child = child->next;
++      }
++    }
++  }
++}
++
++double HTML2TextContent::GetThreshold(xmlNodePtr cur, double max_density_sum, xmlNodePtr maxNode) {
++  double threshold = strToNum<double>(reinterpret_cast<const char*>(xmlGetProp(maxNode, reinterpret_cast<const xmlChar*>("kg_text_density"))));
++//  PRIV_MSG("GetThreshold " << maxNode->name << " threshold=" << threshold);
++//  SetMark(maxNode, 1, true);
++
++  xmlNodePtr parent = maxNode->parent;
++  while (parent) {
++    if (xmlStrcmp(parent->name, (const xmlChar*)"html") != 0) {
++      double text_density = strToNum<double>(reinterpret_cast<const char*>(xmlGetProp(parent, reinterpret_cast<const xmlChar*>("kg_text_density"))));
++      if (text_density > 0 && (threshold - text_density) > -1 * std::numeric_limits<double>::epsilon()) {
++//        PRIV_MSG("GetThreshold " << parent->name << " threshold=" << threshold);
++        threshold = text_density;
++      }
++      SetMark(parent, 2, false);
++      parent = parent->parent;
++    }
++    else {
++      break;
++    }
++  }
++  return threshold;
++}
++
++bool HTML2TextContent::FindMaxDensitySumTag(xmlNodePtr cur, xmlNodePtr &maxNode, double max_density_sum) {
++  double value = 0.0;
++  if (!_ignoredTags->contains(cur->name) && cur->type != XML_TEXT_NODE) {
++    value = strToNum<double>(reinterpret_cast<const char*>(xmlGetProp(cur, reinterpret_cast<const xmlChar*>("kg_density_sum"))));
++    if (std::abs(max_density_sum - value) < std::numeric_limits<double>::epsilon()) {
++      maxNode = cur;
++      return true;
++    }
++    xmlNodePtr child = cur->xmlChildrenNode;
++    while (child != NULL) {
++      if (FindMaxDensitySumTag(child, maxNode, max_density_sum)) {
++          return true;
++      }
++      child = child->next;
++    }
++  }
++  return false;
++}
++
++void HTML2TextContent::MarkContent(xmlNodePtr cur, double threshold, int level) {
++  if (!_ignoredTags->contains(cur->name) && cur->type != XML_TEXT_NODE) {
++    double text_density = strToNum<double>(reinterpret_cast<const char*>(xmlGetProp(cur, reinterpret_cast<const xmlChar*>("kg_text_density"))));
++    double max_density_sum = strToNum<double>(reinterpret_cast<const char*>(xmlGetProp(cur, reinterpret_cast<const xmlChar*>("kg_max_density_sum"))));
++    int mark = strToNum<int>(reinterpret_cast<const char*>(xmlGetProp(cur, reinterpret_cast<const xmlChar*>("kg_mark"))));
++
++
++//    PRIV_MSG("MarkContent: " << cur->name << " text_density=" << text_density << " max_density_sum=" << max_density_sum << " mark=" << mark);
++//    if (mark != 1 && ((text_density - threshold) > -1 * std::numeric_limits<double>::epsilon())) {
++    if (mark != 1 && ((text_density - threshold) > std::numeric_limits<double>::epsilon())) {
++      xmlNodePtr maxNode = NULL;
++      if (FindMaxDensitySumTag(cur, maxNode, max_density_sum)) {
++        int maxNodeMark = strToNum<int>(reinterpret_cast<const char*>(xmlGetProp(maxNode, reinterpret_cast<const xmlChar*>("kg_mark"))));
++        if (maxNodeMark != 1) {
++          SetMark(maxNode, threshold, 1, true);
++          xmlNodePtr parent = maxNode->parent;
++          while (parent) {
++            if (xmlStrcmp(parent->name, (const xmlChar*)"html") != 0) {
++              SetMark(parent, 2, false);
++              parent = parent->parent;
++            }
++            else {
++              break;
++            }
++          }
++          maxNodeMark = strToNum<int>(reinterpret_cast<const char*>(xmlGetProp(maxNode, reinterpret_cast<const xmlChar*>("kg_mark"))));
++//          PRIV_MSG("MarkContent: Marked: " << maxNode->name << " " << maxNodeMark);
++        }
++      }
++//      PRIV_MSG("MarkContent: cur: " << cur->name);
++      xmlNodePtr child = cur->xmlChildrenNode;
++      while (child != NULL) {
++        MarkContent(child, threshold, level+1);
++        child = child->next;
++      }
++    }
++  }
++}
++
++void HTML2TextContent::walkTree(xmlNodePtr cur, StringBuilder& content, int level) {
++  while (cur != NULL) {
++    if (_ignoredTags->contains(cur->name)) {
++      cur = cur->next;
++      continue;
++    }
++//    PRIV_MSG("walkTree\tName: <" << cur->name << ">");
++    if (cur->type == XML_TEXT_NODE && cur->content && xmlStrcmp(cur->content, (const xmlChar*)"\n") != 0) {
++      xmlNodePtr parent = cur->parent;
++      int mark = strToNum<int>(reinterpret_cast<const char*>(xmlGetProp(parent, reinterpret_cast<const xmlChar*>("kg_mark"))));
++      if (mark == 1 || xmlStrcmp(parent->name, (const xmlChar*)"title") == 0) {
++        content.append(cur->content);
++      }
++    }
++    const HashMap<String, String>::iterator it = _tags->find(cur->name);
++    if (it != _tags->end()) {
++      content.append(it->value);
++    }
++    if (cur->xmlChildrenNode != NULL)
++      walkTree(cur->xmlChildrenNode, content, level+1);
++    cur = cur->next;
++  }
++}
++
++xmlXPathObjectPtr HTML2TextContent::getnodeset(xmlDocPtr doc, xmlChar *xpath){
++  
++  xmlXPathContextPtr context;
++  xmlXPathObjectPtr result;
++
++  context = xmlXPathNewContext(doc);
++  if (context == NULL) {
++//    printf("Error in xmlXPathNewContext\n");
++    return NULL;
++  }
++  result = xmlXPathEvalExpression(xpath, context);
++  xmlXPathFreeContext(context);
++  if (result == NULL) {
++//    printf("Error in xmlXPathEvalExpression\n");
++    return NULL;
++  }
++  if(xmlXPathNodeSetIsEmpty(result->nodesetval)){
++    xmlXPathFreeObject(result);
++//    printf("No result\n");
++    return NULL;
++  }
++  return result;
++}
++
++String HTML2TextContent::html2textContent(const char *buffer, int size) {
++  xmlDoc* doc = htmlReadMemory(buffer, size, NULL, "utf-8", HTML_PARSE_RECOVER | HTML_PARSE_NOERROR | HTML_PARSE_NOWARNING);
++  //xmlDoc* doc = htmlReadMemory(buffer, size, NULL, NULL, HTML_PARSE_RECOVER | HTML_PARSE_NOERROR | HTML_PARSE_NOWARNING);
++  ASSERT(doc);
++
++  xmlNodePtr cur = xmlDocGetRootElement(doc);
++  StringBuilder content;
++  int char_num = CountChar(cur, 0);
++  CountTag(cur, 0);
++  int link_char_num = CountLinkChar(cur, 0);
++  CountLinkTag(cur, 0);
++
++  xmlNodePtr body = NULL;
++  xmlXPathObjectPtr result = getnodeset(doc, (xmlChar*)"//body");
++  if (result) {
++    xmlNodeSetPtr nodeset = result->nodesetval;
++    for (int i = 0; i < nodeset->nodeNr; ++i) {
++      body = nodeset->nodeTab[i];
++      break;
++    }
++  }
++
++  if (body == NULL) {
++    body = cur;
++  }
++  char_num = strToNum<int>(reinterpret_cast<const char*>(xmlGetProp(body, reinterpret_cast<const xmlChar*>("kg_char_num"))));
++  link_char_num = strToNum<int>(reinterpret_cast<const char*>(xmlGetProp(body, reinterpret_cast<const xmlChar*>("kg_link_char_num"))));
++//  PRIV_MSG("HTML2TextContent::html2textContent() : " << char_num << ", " << link_char_num << "\n");
++  if (char_num == 0) {
++    return String("");
++  }
++  double ratio = 1.0 * link_char_num / char_num;
++  ComputeTextDensity(cur, ratio, 0);
++  ComputeDensitySum(cur, ratio, 0);
++  xmlNodePtr maxNode = NULL;
++  double max_density_sum = FindMaxDensitySum(body, maxNode);
++  SetMark(cur, 0, true);
++  double threshold = GetThreshold(body, max_density_sum, maxNode);
++  SetMark(maxNode, threshold, 1, true);
++  MarkContent(body, threshold, 0);
++  walkTree(cur, content, 0);
++  std::string content_s = std::string(content.toString().utf8().data());
++//  content_s.erase(std::remove(content_s.begin(), content_s.end(), '\r'), content_s.end());
++  std::replace(content_s.begin(), content_s.end(), '\t', ' ');
++  std::replace(content_s.begin(), content_s.end(), '\r', ' ');
++  std::replace(content_s.begin(), content_s.end(), '\n', ' ');
++//  content_s = std::regex_replace(content_s, std::regex("\\s\\s+"), " ");
++  content_s.erase(std::unique(content_s.begin(), content_s.end(),
++        [](char a, char b) { return a == ' ' && b == ' '; }), content_s.end());
++  String textContent = String::fromUTF8(content_s.c_str());
++  return textContent;
++}
++
++} // namespace blink
+diff --git a/Source/core/tmon/HTML2TextContent.h b/Source/core/tmon/HTML2TextContent.h
+new file mode 100644
+index 0000000..40b9491
+--- /dev/null
++++ b/Source/core/tmon/HTML2TextContent.h
+@@ -0,0 +1,57 @@
++#ifndef HTML2TextContent_h
++#define HTML2TextContent_h
++
++#include "core/CoreExport.h"
++#include "third_party/libxml/src/include/libxml/tree.h"
++#include "third_party/libxml/src/include/libxml/xpath.h"
++#include "wtf/text/WTFString.h"
++#include "wtf/text/StringBuilder.h"
++#include "wtf/text/StringHash.h"
++#include "wtf/HashSet.h"
++#include "wtf/HashMap.h"
++
++namespace blink {
++
++class CORE_EXPORT HTML2TextContent {
++public:
++  HTML2TextContent();
++
++  static bool initialize();
++
++  virtual ~HTML2TextContent();
++
++  static String html2textContent(const char *buffer, int size);
++
++  template<typename T>
++  static std::string numToStr(T value);
++
++  template<typename T>
++  static T strToNum(const std::string& str);
++
++private:
++  static int CountChar(xmlNodePtr cur, int level);
++  static int CountTag(xmlNodePtr cur, int level);
++  static void UpdateLinkChar(xmlNodePtr cur);
++  static int CountLinkChar(xmlNodePtr cur, int level);
++  static void UpdateLinkTag(xmlNodePtr cur);
++  static int CountLinkTag(xmlNodePtr cur, int level);
++  static void ComputeTextDensity(xmlNodePtr cur, double ratio, int level);
++  static void ComputeDensitySum(xmlNodePtr cur, double ratio, int level);
++  static double FindMaxDensitySum(xmlNodePtr cur, xmlNodePtr &maxNode);
++  static void SetMark(xmlNodePtr cur, int mark, bool setChild);
++  static void SetMark(xmlNodePtr cur, double threshold, int mark, bool setChild);
++  static double GetThreshold(xmlNodePtr cur, double max_density_sum, xmlNodePtr maxNode);
++  static bool FindMaxDensitySumTag(xmlNodePtr cur, xmlNodePtr &maxNode, double max_density_sum);
++  static void MarkContent(xmlNodePtr cur, double threshold, int level);
++  static void walkTree(xmlNodePtr cur, StringBuilder& content, int level);
++  static xmlXPathObjectPtr getnodeset(xmlDocPtr doc, xmlChar *xpath);
++
++  static HashSet<String> *_ignoredTags;
++  static HashMap<String, String> *_tags;
++  static bool is_tags_initialized;
++
++};
++
++} // namespace blink
++
++#endif // HTML2TextContent_h
+diff --git a/Source/core/tmon/TrackingControl.cpp b/Source/core/tmon/TrackingControl.cpp
+new file mode 100644
+index 0000000..6624d5b
+--- /dev/null
++++ b/Source/core/tmon/TrackingControl.cpp
+@@ -0,0 +1,22 @@
++#include "config.h"
++#include "core/tmon/TrackingControl.h"
++#include "base/environment.h"
++
++namespace blink {
++
++// TODO
++
++bool IsTrackingControlEnabled() {
++  static bool initialized = false;
++  static bool enabled = false;
++  
++  if (initialized)
++    return enabled;
++
++  base::Environment *env = base::Environment::Create();
++  enabled = env->HasVar("TRACKING_CONTROL");
++  initialized = true;
++  return enabled;
++}
++
++}
+diff --git a/Source/core/tmon/TrackingControl.h b/Source/core/tmon/TrackingControl.h
+new file mode 100644
+index 0000000..fc6bb89
+--- /dev/null
++++ b/Source/core/tmon/TrackingControl.h
+@@ -0,0 +1,16 @@
++#ifndef TrackingControl_h
++#define TrackingControl_h
++
++#include "platform/weborigin/KURL.h"
++
++namespace blink {
++
++#define TMON_ERROR(msg) LOG(ERROR) << "(ERROR):" << msg;
++#define TMON_DEBUG(msg) LOG(ERROR) << msg;
++#define TMON_MSG(msg) LOG(ERROR) << msg;
++
++bool IsTrackingControlEnabled();
++
++}
++
++#endif // TrackingControl_h
+diff --git a/Source/web/FrameLoaderClientImpl.cpp b/Source/web/FrameLoaderClientImpl.cpp
+index a4637ae..cf5ffdd 100644
+--- a/Source/web/FrameLoaderClientImpl.cpp
++++ b/Source/web/FrameLoaderClientImpl.cpp
+@@ -366,6 +366,12 @@ void FrameLoaderClientImpl::dispatchDidChangeResourcePriority(unsigned long iden
+         m_webFrame->client()->didChangeResourcePriority(m_webFrame, identifier, static_cast<WebURLRequest::Priority>(priority), intraPriorityValue);
+ }
+ 
++void FrameLoaderClientImpl::dispatchDidFinishClassification(const String& result)
++{
++    if (m_webFrame->client())
++        m_webFrame->client()->didFinishClassification(m_webFrame, result);
++}
++
+ // Called when a particular resource load completes
+ void FrameLoaderClientImpl::dispatchDidFinishLoading(DocumentLoader* loader,
+                                                     unsigned long identifier)
+@@ -488,6 +494,13 @@ void FrameLoaderClientImpl::dispatchDidChangeThemeColor()
+         m_webFrame->client()->didChangeThemeColor();
+ }
+ 
++bool FrameLoaderClientImpl::shouldCheckUserTrackingPreference() const
++{
++    if (m_webFrame)
++        return m_webFrame->client()->shouldCheckUserTrackingPreference();
++    return true;
++}
++
+ static bool allowCreatingBackgroundTabs()
+ {
+ 
+diff --git a/Source/web/FrameLoaderClientImpl.h b/Source/web/FrameLoaderClientImpl.h
+index c1789ed..5f08126 100644
+--- a/Source/web/FrameLoaderClientImpl.h
++++ b/Source/web/FrameLoaderClientImpl.h
+@@ -81,6 +81,7 @@ public:
+     virtual void dispatchWillSendRequest(DocumentLoader*, unsigned long identifier, ResourceRequest&, const ResourceResponse& redirectResponse) override;
+     virtual void dispatchDidReceiveResponse(DocumentLoader*, unsigned long identifier, const ResourceResponse&) override;
+     virtual void dispatchDidChangeResourcePriority(unsigned long identifier, ResourceLoadPriority, int intraPriorityValue) override;
++    virtual void dispatchDidFinishClassification(const String&) override;
+     virtual void dispatchDidFinishLoading(DocumentLoader*, unsigned long identifier) override;
+     virtual void dispatchDidLoadResourceFromMemoryCache(const ResourceRequest&, const ResourceResponse&) override;
+     virtual void dispatchDidHandleOnloadEvents() override;
+@@ -98,6 +99,7 @@ public:
+     virtual void dispatchDidFirstVisuallyNonEmptyLayout() override;
+ 
+     virtual void dispatchDidChangeThemeColor() override;
++    virtual bool shouldCheckUserTrackingPreference() const override;
+     virtual NavigationPolicy decidePolicyForNavigation(const ResourceRequest&, DocumentLoader*, NavigationPolicy) override;
+     virtual void dispatchWillRequestResource(FetchRequest*) override;
+     virtual void dispatchWillSendSubmitEvent(HTMLFormElement*) override;
+diff --git a/Source/web/WebLocalFrameImpl.cpp b/Source/web/WebLocalFrameImpl.cpp
+index 976f27c..2b73bab 100644
+--- a/Source/web/WebLocalFrameImpl.cpp
++++ b/Source/web/WebLocalFrameImpl.cpp
+@@ -944,6 +944,12 @@ void WebLocalFrameImpl::reload(bool ignoreCache)
+     frame()->loader().reload(ignoreCache ? EndToEndReload : NormalReload);
+ }
+ 
++void WebLocalFrameImpl::didCheckUserTrackingPreference()
++{
++    ASSERT(frame());
++    frame()->document()->didCheckUserTrackingPreference(true);
++}
++
+ void WebLocalFrameImpl::reloadWithOverrideURL(const WebURL& overrideUrl, bool ignoreCache)
+ {
+     ASSERT(frame());
+diff --git a/Source/web/WebLocalFrameImpl.h b/Source/web/WebLocalFrameImpl.h
+index c71022e..2adad1f 100644
+--- a/Source/web/WebLocalFrameImpl.h
++++ b/Source/web/WebLocalFrameImpl.h
+@@ -132,6 +132,7 @@ public:
+         v8::Local<v8::Value> argv[]) override;
+     virtual v8::Local<v8::Context> mainWorldScriptContext() const override;
+     virtual void reload(bool ignoreCache) override;
++    virtual void didCheckUserTrackingPreference() override;
+     virtual void reloadWithOverrideURL(const WebURL& overrideUrl, bool ignoreCache) override;
+     virtual void reloadImage(const WebNode&) override;
+     virtual void loadRequest(const WebURLRequest&) override;
+diff --git a/public/web/WebFrameClient.h b/public/web/WebFrameClient.h
+index 83753e4..6ea5a71 100644
+--- a/public/web/WebFrameClient.h
++++ b/public/web/WebFrameClient.h
+@@ -646,6 +646,10 @@ public:
+     // App Banners ---------------------------------------------------------
+     virtual WebAppBannerClient* appBannerClient() { return 0; }
+ 
++    virtual void didFinishClassification(WebLocalFrame*, const WebString&) { }
++
++    virtual bool shouldCheckUserTrackingPreference() { return true; }
++
+ protected:
+     virtual ~WebFrameClient() { }
+ };
+diff --git a/public/web/WebLocalFrame.h b/public/web/WebLocalFrame.h
+index 88fac0d..c1f2312 100644
+--- a/public/web/WebLocalFrame.h
++++ b/public/web/WebLocalFrame.h
+@@ -134,6 +134,8 @@ public:
+     // If the provided node is an image, reload the image bypassing the cache.
+     virtual void reloadImage(const WebNode&) = 0;
+ 
++    virtual void didCheckUserTrackingPreference() = 0;
++
+ protected:
+     explicit WebLocalFrame(WebTreeScopeType scope) : WebFrame(scope) { }
+ };
