@@ -2062,7 +2062,7 @@ index 8e184c0fd456d0c340cf02f7e51963819435734b..2e36ab16079039999f8e4ad972f0e973
  
  SkColor TintForUnderline(SkColor input) {
 diff --git a/chrome/browser/ui/browser.cc b/chrome/browser/ui/browser.cc
-index 1cc78f27f2e4b6fd4fa11efd14c1bd64a4bf9825..e4122bccb494bf7ddc2f73166a76cd30c567accb 100644
+index 1cc78f27f2e4b6fd4fa11efd14c1bd64a4bf9825..8bb2e27d1e91f461a4ae32eb8688dabd544dacb0 100644
 --- a/chrome/browser/ui/browser.cc
 +++ b/chrome/browser/ui/browser.cc
 @@ -11,11 +11,15 @@
@@ -2101,7 +2101,7 @@ index 1cc78f27f2e4b6fd4fa11efd14c1bd64a4bf9825..e4122bccb494bf7ddc2f73166a76cd30
    nav_params.source_contents = source;
    nav_params.tabstrip_add_types = TabStripModel::ADD_NONE;
    if (params.user_gesture)
-@@ -1414,6 +1424,146 @@ WebContents* Browser::OpenURLFromTab(WebContents* source,
+@@ -1414,6 +1424,147 @@ WebContents* Browser::OpenURLFromTab(WebContents* source,
    return nav_params.target_contents;
  }
  
@@ -2155,11 +2155,11 @@ index 1cc78f27f2e4b6fd4fa11efd14c1bd64a4bf9825..e4122bccb494bf7ddc2f73166a76cd30
 +    else
 +      return false;
 +  }
-+  std::vector<ContentSettingsPattern> categories;
++  std::vector<GURL> categories;
 +  std::stringstream ss(result);
 +  std::string item;
 +  while (std::getline(ss, item, '\t')) {
-+    categories.push_back(ContentSettingsPattern::FromString("category://"+item));
++    categories.push_back(GURL("category://"+item));
 +  }
 +  int max_whitelist_priority = -1;
 +  int max_blacklist_priority = -1;
@@ -2181,18 +2181,17 @@ index 1cc78f27f2e4b6fd4fa11efd14c1bd64a4bf9825..e4122bccb494bf7ddc2f73166a76cd30
 +  }
 +
 +  for (unsigned i = 0; i < categories.size(); ++i) {
-+    GURL category(categories[i].ToString());
-+    ContentSetting category_setting = map->GetContentSetting(category, category, CONTENT_SETTINGS_TYPE_TRACKING_CATEGORY, std::string());
++    ContentSetting category_setting = map->GetContentSetting(categories[i], categories[i], CONTENT_SETTINGS_TYPE_TRACKING_CATEGORY, std::string());
 +    if (category_setting != CONTENT_SETTING_DEFAULT) {
 +      bool white_list_rule = false;
 +      int priority = -1;
 +      CheckContentSetting(category_setting, white_list_rule, priority);
 +      if (white_list_rule && priority > max_whitelist_priority) {
-+        //LOG(ERROR) << "Browser::ShouldUseOffTheRecord() : Category Whitelist: " << categories[i].ToString() << " : " << priority;
++        //LOG(ERROR) << "Browser::ShouldUseOffTheRecord() : Category Whitelist: " << categories[i].path() << " : " << priority;
 +        max_whitelist_priority = priority;
 +      }
 +      if (!white_list_rule && priority > max_blacklist_priority) {
-+        //LOG(ERROR) << "Browser::ShouldUseOffTheRecord() : Category Blacklist: " << categories[i].ToString() << " : " << priority;
++        //LOG(ERROR) << "Browser::ShouldUseOffTheRecord() : Category Blacklist: " << categories[i].path() << " : " << priority;
 +        max_blacklist_priority = priority;
 +      }
 +    }
@@ -2220,6 +2219,7 @@ index 1cc78f27f2e4b6fd4fa11efd14c1bd64a4bf9825..e4122bccb494bf7ddc2f73166a76cd30
 +      priority = 1;
 +      white_list_rule = true;
 +      break;
++    case CONTENT_SETTING_ALLOW_MEDIUM :
 +    case CONTENT_SETTING_ALLOW :
 +      priority = 2;
 +      white_list_rule = true;
@@ -2232,6 +2232,7 @@ index 1cc78f27f2e4b6fd4fa11efd14c1bd64a4bf9825..e4122bccb494bf7ddc2f73166a76cd30
 +      priority = 1;
 +      white_list_rule = false;
 +      break;
++    case CONTENT_SETTING_BLOCK_MEDIUM :
 +    case CONTENT_SETTING_BLOCK :
 +      priority = 2;
 +      white_list_rule = false;
@@ -3538,7 +3539,7 @@ index 48f16e578ace5118c7ec29a830aa10e59bb509ce..5343061333aa8d8afc1c7c9094b61c77
  };
  
 diff --git a/components/content_settings/core/common/content_settings_pattern.cc b/components/content_settings/core/common/content_settings_pattern.cc
-index b02cbee5dac6dad2f2e967507e0f079643f003ff..33607ba8b99c8904cf26e2d7dd03d7ecc13cdf48 100644
+index b02cbee5dac6dad2f2e967507e0f079643f003ff..0e3391a231f01637d923745dea515c34205a05a2 100644
 --- a/components/content_settings/core/common/content_settings_pattern.cc
 +++ b/components/content_settings/core/common/content_settings_pattern.cc
 @@ -279,6 +279,7 @@ bool ContentSettingsPattern::Builder::Validate(const PatternParts& parts) {
@@ -3557,7 +3558,17 @@ index b02cbee5dac6dad2f2e967507e0f079643f003ff..33607ba8b99c8904cf26e2d7dd03d7ec
        parts.scheme != std::string(url::kHttpScheme) &&
        parts.scheme != std::string(url::kHttpsScheme)) {
      return false;
-@@ -562,11 +564,18 @@ ContentSettingsPattern::Relation ContentSettingsPattern::Compare(
+@@ -478,6 +480,9 @@ bool ContentSettingsPattern::Matches(
+     return false;
+   }
+
++  if (parts_.scheme == "category" && local_url->scheme() == "category") {
++      return (parts_.host + parts_.path) == local_url->path().substr(2);
++  }
+   // File URLs have no host. Matches if the pattern has the path wildcard set,
+   // or if the path in the URL is identical to the one in the pattern.
+   // For filesystem:file URLs, the path used is the filesystem type, so all
+@@ -562,11 +567,18 @@ ContentSettingsPattern::Relation ContentSettingsPattern::Compare(
        scheme_relation == DISJOINT_ORDER_POST)
      return scheme_relation;
  
@@ -3577,7 +3588,7 @@ index b02cbee5dac6dad2f2e967507e0f079643f003ff..33607ba8b99c8904cf26e2d7dd03d7ec
  }
  
  bool ContentSettingsPattern::operator==(
-@@ -709,3 +718,29 @@ ContentSettingsPattern::Relation ContentSettingsPattern::ComparePort(
+@@ -709,3 +721,29 @@ ContentSettingsPattern::Relation ContentSettingsPattern::ComparePort(
      return ContentSettingsPattern::DISJOINT_ORDER_PRE;
    return ContentSettingsPattern::DISJOINT_ORDER_POST;
  }
