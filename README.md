@@ -9,11 +9,11 @@ All navigations in TrackMeOrNot start with an anonymous browsing context.
 The machine learning model in TrackMeOrNot automatically determines the topic of the content that the user is visiting.
 Based on the user's tracking preference, TrackMeOrNot can seamlessly switch to or stay in the expected browsing context (persistent or anonymous) to meet user's privacy need.
 
-You can find more information about TrackMeOrNot in our [WWW 2016 research paper](http://www.cc.gatech.edu/~wmeng6/www16_trackmeornot.pdf). Please reference our paper when using TrackMeOrNot or our data set. The BibTeX format file is provided with the source code.
+You can find more information about TrackMeOrNot in our [WWW 2016 research paper](https://www.cse.cuhk.edu.hk/~wei/papers/www16_trackmeornot.pdf). Please reference our paper when using TrackMeOrNot or our data set. The BibTeX format file is provided with the source code.
 
 ## Research Project Page
 
-http://www.cc.gatech.edu/~wmeng6/trackmeornot.html
+https://www.cse.cuhk.edu.hk/~wei/trackmeornot.html
 
 ## Build Instructions
 
@@ -122,10 +122,10 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 
 ## Developers 
 
-Wei Meng <wei@gatech.edu>
+Wei Meng <wei@cse.cuhk.edu.hk>
 
-Byoungyoung Lee <blee@gatech.edu>
+Byoungyoung Lee <byoungyoung@purdue.edu>
 
 ## Contact ##
 
-Wei Meng <wei@gatech.edu>
+Wei Meng <wei@cse.cuhk.edu.hk>
